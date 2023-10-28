@@ -30,6 +30,20 @@ standardization = {
             'x': {'mean': 0, 'std': 1},
             'y': {'mean': 0, 'std': 1}
         }
+    }, 
+    'ROBOT': {
+        'position': {
+            'x': {'mean': 0, 'std': 1},
+            'y': {'mean': 0, 'std': 1}
+        },
+        'velocity': {
+            'x': {'mean': 0, 'std': 2},
+            'y': {'mean': 0, 'std': 2}
+        },
+        'acceleration': {
+            'x': {'mean': 0, 'std': 1},
+            'y': {'mean': 0, 'std': 1}
+        }
     }
 }
 
@@ -82,33 +96,36 @@ nl = 0
 l = 0
 maybe_makedirs('../processed')
 data_columns = pd.MultiIndex.from_product([['position', 'velocity', 'acceleration'], ['x', 'y']])
-for desired_source in ['eth', 'hotel', 'univ', 'zara1', 'zara2']:
-    for data_class in ['train', 'val', 'test']:
-        env = Environment(node_type_list=['PEDESTRIAN'], standardization=standardization)
+for desired_source in ['/home/alex/Code/SocialVAE/data/zucker_day_controller_scene']:
+    for data_class in ['test']:
+        env = Environment(node_type_list=['PEDESTRIAN', 'ROBOT'], standardization=standardization)
         attention_radius = dict()
         attention_radius[(env.NodeType.PEDESTRIAN, env.NodeType.PEDESTRIAN)] = 3.0
+        attention_radius[(env.NodeType.PEDESTRIAN, env.NodeType.ROBOT)] = 3.0
+        attention_radius[(env.NodeType.ROBOT, env.NodeType.ROBOT)] = 3.0
+        attention_radius[(env.NodeType.ROBOT, env.NodeType.PEDESTRIAN)] = 3.0
         env.attention_radius = attention_radius
 
         scenes = []
         data_dict_path = os.path.join('../processed', '_'.join([desired_source, data_class]) + '.pkl')
 
-        for subdir, dirs, files in os.walk(os.path.join('raw', desired_source, data_class)):
+        for subdir, dirs, files in os.walk('/app/zucker_day_controller_scene'):
             for file in files:
                 if file.endswith('.txt'):
                     input_data_dict = dict()
                     full_data_path = os.path.join(subdir, file)
                     print('At', full_data_path)
 
-                    data = pd.read_csv(full_data_path, sep='\t', index_col=False, header=None)
-                    data.columns = ['frame_id', 'track_id', 'pos_x', 'pos_y']
+                    data = pd.read_csv(full_data_path, sep=' ', index_col=False, header=None)
+                    data.columns = ['frame_id', 'track_id', 'pos_x', 'pos_y', 'type', 'a' 'b', 'c', 'd', 'e', 'f']
                     data['frame_id'] = pd.to_numeric(data['frame_id'], downcast='integer')
                     data['track_id'] = pd.to_numeric(data['track_id'], downcast='integer')
 
-                    data['frame_id'] = data['frame_id'] // 10
+                    data['frame_id'] = data['frame_id']
 
                     data['frame_id'] -= data['frame_id'].min()
 
-                    data['node_type'] = 'PEDESTRIAN'
+                    data['node_type'] = data["type"]
                     data['node_id'] = data['track_id'].astype(str)
                     data.sort_values('frame_id', inplace=True)
 
@@ -123,6 +140,7 @@ for desired_source in ['eth', 'hotel', 'univ', 'zara1', 'zara2']:
                     for node_id in pd.unique(data['node_id']):
 
                         node_df = data[data['node_id'] == node_id]
+
                         assert np.all(np.diff(node_df['frame_id']) == 1)
 
                         node_values = node_df[['pos_x', 'pos_y']].values
@@ -131,6 +149,11 @@ for desired_source in ['eth', 'hotel', 'univ', 'zara1', 'zara2']:
                             continue
 
                         new_first_idx = node_df['frame_id'].iloc[0]
+                        typ = node_df['node_type'].iloc[0]
+                        if typ == "HUMAN":
+                            typ = env.NodeType.PEDESTRIAN
+                        else:
+                            typ = env.NodeType.ROBOT
 
                         x = node_values[:, 0]
                         y = node_values[:, 1]
@@ -147,10 +170,11 @@ for desired_source in ['eth', 'hotel', 'univ', 'zara1', 'zara2']:
                                      ('acceleration', 'y'): ay}
 
                         node_data = pd.DataFrame(data_dict, columns=data_columns)
-                        node = Node(node_type=env.NodeType.PEDESTRIAN, node_id=node_id, data=node_data)
+                        node = Node(node_type=typ, node_id=node_id, data=node_data)
                         node.first_timestep = new_first_idx
 
                         scene.nodes.append(node)
+
                     if data_class == 'train':
                         scene.augmented = list()
                         angles = np.arange(0, 360, 15) if data_class == 'train' else [0]
